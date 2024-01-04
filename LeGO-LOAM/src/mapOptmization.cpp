@@ -77,11 +77,11 @@ MapOptimization::MapOptimization(ros::NodeHandle &node,
   // for global map visualization
   downSizeFilterGlobalMapKeyFrames.setLeafSize(0.4, 0.4, 0.4);
 
-  odomAftMapped.header.frame_id = "/camera_init";
-  odomAftMapped.child_frame_id = "/aft_mapped";
+  odomAftMapped.header.frame_id = "camera_init";
+  odomAftMapped.child_frame_id = "aft_mapped";
 
-  aftMappedTrans.frame_id_ = "/camera_init";
-  aftMappedTrans.child_frame_id_ = "/aft_mapped";
+  aftMappedTrans.frame_id_ = "camera_init";
+  aftMappedTrans.child_frame_id_ = "aft_mapped";
 
   nh.getParam("/lego_loam/laser/scan_period", _scan_period);
 
@@ -107,9 +107,13 @@ MapOptimization::MapOptimization(ros::NodeHandle &node,
 
   allocateMemory();
 
+  // 发布全局地图线程
   _publish_global_thread = std::thread(&MapOptimization::publishGlobalMapThread, this);
+  // 回环检测线程
   _loop_closure_thread = std::thread(&MapOptimization::loopClosureThread, this);
   _run_thread = std::thread(&MapOptimization::run, this);
+
+  std::printf("MapOptimization object initialized\n");
 
 }
 
@@ -226,6 +230,7 @@ void MapOptimization::publishGlobalMapThread()
     _publish_global_signal.receive(ready);
     if(ready){
       publishGlobalMap();
+      std::printf("one publishGlobalMap done\n");
     }
   }
 }
@@ -238,10 +243,12 @@ void MapOptimization::loopClosureThread()
     _loop_closure_signal.receive(ready);
     if(ready && _loop_closure_enabled){
       performLoopClosure();
+      std::printf("one performLoopClosure done\n");
     }
   }
 }
 
+// 将坐标转移到世界坐标系下,得到可用于建图的Lidar坐标，即修改了transformTobeMapped的值
 void MapOptimization::transformAssociateToMap() {
   float x1 = cos(transformSum[1]) * (transformBefMapped[3] - transformSum[3]) -
              sin(transformSum[1]) * (transformBefMapped[5] - transformSum[5]);
@@ -1393,32 +1400,42 @@ void MapOptimization::run() {
       timeLaserOdometry = association.laser_odometry.header.stamp.toSec();
       timeLastProcessing = timeLaserOdometry;
 
+      // 读出association.laser_odometry信息到transformSum中
       OdometryToTransform(association.laser_odometry, transformSum);
 
+      // 得到transformTobeMapped
       transformAssociateToMap();
 
+      // 提取周围关键帧
       extractSurroundingKeyFrames();
 
+      // 降采样当前帧
       downsampleCurrentScan();
 
+      // 当前扫描进行边缘优化，图优化以及进行LM优化的过程
       scan2MapOptimization();
 
+      // 保存关键帧
       saveKeyFramesAndFactor();
 
       correctPoses();
 
+      // 发送TF数据
       publishTF();
 
+      // 发送关键位姿和关键帧
       publishKeyPosesAndFrames();
 
       clearCloud();
     }
     cycle_count++;
 
+    // 每处理3帧数据，发送一次回环信息
     if ((cycle_count % 3) == 0) {
       _loop_closure_signal.send(true);
     }
 
+    // 每处理10帧数据，发送一次全局信息
     if ((cycle_count % 10) == 0) {
       _publish_global_signal.send(true);
     }

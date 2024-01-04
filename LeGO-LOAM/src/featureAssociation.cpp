@@ -80,6 +80,8 @@ FeatureAssociation::FeatureAssociation(ros::NodeHandle &node,
   initializationValue();
 
  _run_thread = std::thread (&FeatureAssociation::runFeatureAssociation, this);
+
+ std::printf("FeatureAssociation object initialized done\n");
 }
 
 FeatureAssociation::~FeatureAssociation()
@@ -135,11 +137,11 @@ void FeatureAssociation::initializationValue() {
   laserCloudOri.reset(new pcl::PointCloud<PointType>());
   coeffSel.reset(new pcl::PointCloud<PointType>());
 
-  laserOdometry.header.frame_id = "/camera_init";
-  laserOdometry.child_frame_id = "/laser_odom";
+  laserOdometry.header.frame_id = "camera_init";
+  laserOdometry.child_frame_id = "laser_odom";
 
-  laserOdometryTrans.frame_id_ = "/camera_init";
-  laserOdometryTrans.child_frame_id_ = "/laser_odom";
+  laserOdometryTrans.frame_id_ = "camera_init";
+  laserOdometryTrans.child_frame_id_ = "laser_odom";
 
   isDegenerate = false;
 
@@ -175,6 +177,7 @@ void FeatureAssociation::adjustDistortion() {
     }
 
     float relTime = (ori - segInfo.startOrientation) / segInfo.orientationDiff;
+    // 用point.intensity来保存时间
     point.intensity =
         int(segmentedCloud->points[i].intensity) + _scan_period * relTime;
 
@@ -185,6 +188,7 @@ void FeatureAssociation::adjustDistortion() {
 void FeatureAssociation::calculateSmoothness() {
   int cloudSize = segmentedCloud->points.size();
   for (int i = 5; i < cloudSize - 5; i++) {
+    // 求解当前点和周围点的range的差距
     float diffRange = segInfo.segmentedCloudRange[i - 5] +
                       segInfo.segmentedCloudRange[i - 4] +
                       segInfo.segmentedCloudRange[i - 3] +
@@ -199,7 +203,11 @@ void FeatureAssociation::calculateSmoothness() {
 
     cloudCurvature[i] = diffRange * diffRange;
 
+    // 在markOccludedPoints()函数中重新修改
     cloudNeighborPicked[i] = 0;
+    // 在extractFeatures()函数中对标签进行修改
+    // surfPointsFlat标记为-1, surfPointsLessFlatScan为不大于0的标签
+    // cornerPointsSharp标记为2，cornerPointsLessSharp标记为1
     cloudLabel[i] = 0;
 
     cloudSmoothness[i].value = cloudCurvature[i];
@@ -207,6 +215,7 @@ void FeatureAssociation::calculateSmoothness() {
   }
 }
 
+// 阻塞点指点云之间互相遮挡，但又距离很近的点
 void FeatureAssociation::markOccludedPoints() {
   int cloudSize = segmentedCloud->points.size();
 
@@ -216,6 +225,7 @@ void FeatureAssociation::markOccludedPoints() {
     int columnDiff = std::abs(int(segInfo.segmentedCloudColInd[i + 1] -
                                   segInfo.segmentedCloudColInd[i]));
 
+    // 选择距离较远的点，将其标记为1
     if (columnDiff < 10) {
       if (depth1 - depth2 > 0.3) {
         cloudNeighborPicked[i - 5] = 1;
@@ -239,6 +249,7 @@ void FeatureAssociation::markOccludedPoints() {
     float diff2 = std::abs(segInfo.segmentedCloudRange[i + 1] -
                            segInfo.segmentedCloudRange[i]);
 
+    // 选择距离变化较大的点，将其标记为1
     if (diff1 > 0.02 * segInfo.segmentedCloudRange[i] &&
         diff2 > 0.02 * segInfo.segmentedCloudRange[i])
       cloudNeighborPicked[i] = 1;
@@ -265,6 +276,7 @@ void FeatureAssociation::extractFeatures() {
 
       if (sp >= ep) continue;
 
+      // 按照cloudSmoothness.value来排序
       std::sort(cloudSmoothness.begin() + sp, cloudSmoothness.begin() + ep,
                 by_value());
 
@@ -276,10 +288,12 @@ void FeatureAssociation::extractFeatures() {
             segInfo.segmentedCloudGroundFlag[ind] == false) {
           largestPickedNum++;
           if (largestPickedNum <= 2) {
+            // cornerPointsSharp标记为2
             cloudLabel[ind] = 2;
             cornerPointsSharp->push_back(segmentedCloud->points[ind]);
             cornerPointsLessSharp->push_back(segmentedCloud->points[ind]);
           } else if (largestPickedNum <= 20) {
+            // 添加20个点到cornerPointsLessSharp中去
             cloudLabel[ind] = 1;
             cornerPointsLessSharp->push_back(segmentedCloud->points[ind]);
           } else {
@@ -288,6 +302,8 @@ void FeatureAssociation::extractFeatures() {
 
           cloudNeighborPicked[ind] = 1;
           for (int l = 1; l <= 5; l++) {
+            // 从ind+l开始后面5个点, 每个点index之间的差值
+            // 确保columnDiff<=10, 然后标记为我们需要的点
             if( ind + l >= segInfo.segmentedCloudColInd.size() ) {
               continue;
             }
@@ -298,6 +314,7 @@ void FeatureAssociation::extractFeatures() {
             cloudNeighborPicked[ind + l] = 1;
           }
           for (int l = -1; l >= -5; l--) {
+            // 从ind+l开始前面五个点，计算差值然后标记
             if( ind + l < 0 ) {
               continue;
             }
@@ -317,6 +334,7 @@ void FeatureAssociation::extractFeatures() {
             cloudCurvature[ind] < _surf_threshold &&
             segInfo.segmentedCloudGroundFlag[ind] == true) {
           cloudLabel[ind] = -1;
+          // 获取4个平面点
           surfPointsFlat->push_back(segmentedCloud->points[ind]);
 
           smallestPickedNum++;
@@ -324,6 +342,7 @@ void FeatureAssociation::extractFeatures() {
             break;
           }
 
+          // 从前往后判断并标记邻接点
           cloudNeighborPicked[ind] = 1;
           for (int l = 1; l <= 5; l++) {
             if( ind + l >= segInfo.segmentedCloudColInd.size() ) {
@@ -336,6 +355,7 @@ void FeatureAssociation::extractFeatures() {
 
             cloudNeighborPicked[ind + l] = 1;
           }
+          // 从后往前判断并标记邻接点
           for (int l = -1; l >= -5; l--) {
             if (ind + l < 0) {
               continue;
@@ -357,6 +377,7 @@ void FeatureAssociation::extractFeatures() {
       }
     }
 
+    // 下采样surfPointsLessFlatScan
     surfPointsLessFlatScanDS->clear();
     downSizeFilter.setInputCloud(surfPointsLessFlatScan);
     downSizeFilter.filter(*surfPointsLessFlatScanDS);
@@ -1102,13 +1123,13 @@ void FeatureAssociation::checkSystemInitialization() {
   sensor_msgs::PointCloud2 laserCloudCornerLast2;
   pcl::toROSMsg(*laserCloudCornerLast, laserCloudCornerLast2);
   laserCloudCornerLast2.header.stamp = cloudHeader.stamp;
-  laserCloudCornerLast2.header.frame_id = "/camera";
+  laserCloudCornerLast2.header.frame_id = "camera";
   _pub_cloud_corner_last.publish(laserCloudCornerLast2);
 
   sensor_msgs::PointCloud2 laserCloudSurfLast2;
   pcl::toROSMsg(*laserCloudSurfLast, laserCloudSurfLast2);
   laserCloudSurfLast2.header.stamp = cloudHeader.stamp;
-  laserCloudSurfLast2.header.frame_id = "/camera";
+  laserCloudSurfLast2.header.frame_id = "camera";
   _pub_cloud_surf_last.publish(laserCloudSurfLast2);
 
   systemInitedLM = true;
@@ -1121,9 +1142,13 @@ void FeatureAssociation::updateTransformation() {
     laserCloudOri->clear();
     coeffSel->clear();
 
+    // 找到对应的特征平面
+    // 然后计算协方差矩阵，保存在coeffSel队列中
+    // laserCloudOri中保存的是对应于coeffSel的未转换到开始时刻的原始点云数据
     findCorrespondingSurfFeatures(iterCount1);
 
     if (laserCloudOri->points.size() < 10) continue;
+    // 通过面特征匹配，计算变换矩阵
     if (calculateTransformationSurf(iterCount1) == false) break;
   }
 
@@ -1131,15 +1156,18 @@ void FeatureAssociation::updateTransformation() {
     laserCloudOri->clear();
     coeffSel->clear();
 
+    // 找到对应的特征边/角点
     findCorrespondingCornerFeatures(iterCount2);
 
     if (laserCloudOri->points.size() < 10) continue;
+    // 通过角特征匹配，计算变换矩阵
     if (calculateTransformationCorner(iterCount2) == false) break;
   }
 }
 
 void FeatureAssociation::integrateTransformation() {
   float rx, ry, rz, tx, ty, tz;
+  // 将两帧之间的位姿变换和之前累积的位姿变换累加，得到相对第一帧的变换矩阵
   AccumulateRotation(transformSum[0], transformSum[1], transformSum[2],
                      -transformCur[0], -transformCur[1], -transformCur[2], rx,
                      ry, rz);
@@ -1182,6 +1210,7 @@ void FeatureAssociation::publishOdometry() {
   geometry_msgs::Quaternion geoQuat = tf::createQuaternionMsgFromRollPitchYaw(
       transformSum[2], -transformSum[0], -transformSum[1]);
 
+  // 发布当前帧相对于第一帧的位姿变换
   laserOdometry.header.stamp = cloudHeader.stamp;
   laserOdometry.pose.pose.orientation.x = -geoQuat.y;
   laserOdometry.pose.pose.orientation.y = -geoQuat.z;
@@ -1192,6 +1221,7 @@ void FeatureAssociation::publishOdometry() {
   laserOdometry.pose.pose.position.z = transformSum[5];
   pubLaserOdometry.publish(laserOdometry);
 
+  // laserOdometryTrans用于tf广播
   laserOdometryTrans.stamp_ = cloudHeader.stamp;
   laserOdometryTrans.setRotation(
       tf::Quaternion(-geoQuat.y, -geoQuat.z, geoQuat.x, geoQuat.w));
@@ -1208,7 +1238,7 @@ void FeatureAssociation::publishCloud() {
     if (pub.getNumSubscribers() != 0) {
       pcl::toROSMsg(*cloud, laserCloudOutMsg);
       laserCloudOutMsg.header.stamp = cloudHeader.stamp;
-      laserCloudOutMsg.header.frame_id = "/camera";
+      laserCloudOutMsg.header.frame_id = "camera";
       pub.publish(laserCloudOutMsg);
     }
   };
@@ -1223,6 +1253,7 @@ void FeatureAssociation::publishCloudsLast() {
 
   int cornerPointsLessSharpNum = cornerPointsLessSharp->points.size();
   for (int i = 0; i < cornerPointsLessSharpNum; i++) {
+    // 将k+1时刻的less特征点转移至k+1时刻的sweep的结束位置处的雷达坐标系下
     TransformToEnd(&cornerPointsLessSharp->points[i],
                    &cornerPointsLessSharp->points[i]);
   }
@@ -1250,6 +1281,7 @@ void FeatureAssociation::publishCloudsLast() {
   }
 
   frameCount++;
+  // 调整坐标系
   adjustOutlierCloud();
 
   if (frameCount >= skipFrameNum + 1) {
@@ -1261,7 +1293,7 @@ void FeatureAssociation::publishCloudsLast() {
       if (pub.getNumSubscribers() != 0) {
         pcl::toROSMsg(*cloud, cloudTemp);
         cloudTemp.header.stamp = cloudHeader.stamp;
-        cloudTemp.header.frame_id = "/camera";
+        cloudTemp.header.frame_id = "camera";
         pub.publish(cloudTemp);
       }
     };
@@ -1280,6 +1312,7 @@ void FeatureAssociation::runFeatureAssociation() {
     if( !ros::ok() ) break;
 
     //--------------
+    // 接收imageProjection的信息
     outlierCloud = projection.outlier_cloud;
     segmentedCloud = projection.segmented_cloud;
     segInfo = std::move(projection.seg_msg);
@@ -1288,24 +1321,33 @@ void FeatureAssociation::runFeatureAssociation() {
     timeScanCur = cloudHeader.stamp.toSec();
 
     /**  1. Feature Extraction  */
+    // 将点云数据进行坐标变换
     adjustDistortion();
 
+    // 计算平滑度并保存结果
     calculateSmoothness();
 
+    // 标记阻塞点
     markOccludedPoints();
 
+    // 特征提取，分别保存到cornerPointsSharp队列中
+    // 减少点云数量以及计算量
     extractFeatures();
 
+    // 发布cornerPointsSharp等4种类型点云数据
     publishCloud();  // cloud for visualization
 
     // Feature Association
     if (!systemInitedLM) {
+      // 保留上一帧数据，来与当前数据进行位姿求解
       checkSystemInitialization();
       continue;
     }
 
+    // 更新变换
     updateTransformation();
 
+    // 积分总变换
     integrateTransformation();
 
     publishOdometry();
@@ -1315,6 +1357,7 @@ void FeatureAssociation::runFeatureAssociation() {
     //--------------
     _cycle_count++;
 
+    // 按照固定间隔发送
     if (_cycle_count == _mapping_frequency_div) {
       _cycle_count = 0;
       AssociationOut out;
@@ -1329,6 +1372,7 @@ void FeatureAssociation::runFeatureAssociation() {
       out.laser_odometry = laserOdometry;
 
       _output_channel.send(std::move(out));
+      std::printf("one featureAssociation send done\n\n");
     }
   }
 }

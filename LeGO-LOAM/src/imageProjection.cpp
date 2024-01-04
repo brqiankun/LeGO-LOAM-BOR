@@ -32,8 +32,7 @@
 ImageProjection::ImageProjection(ros::NodeHandle& nh,
                                  Channel<ProjectionOut>& output_channel)
     : _nh(nh),
-      _output_channel(output_channel)
-{
+      _output_channel(output_channel) {
   _sub_laser_cloud = nh.subscribe<sensor_msgs::PointCloud2>(
       "/lidar_points", 1, &ImageProjection::cloudHandler, this);
 
@@ -92,6 +91,8 @@ ImageProjection::ImageProjection(ros::NodeHandle& nh,
   _full_cloud->points.resize(cloud_size);
   _full_info_cloud->points.resize(cloud_size);
 
+  std::printf("ImageProjection object initialized\n");
+
 }
 
 void ImageProjection::resetParameters() {
@@ -100,6 +101,7 @@ void ImageProjection::resetParameters() {
   nanPoint.x = std::numeric_limits<float>::quiet_NaN();
   nanPoint.y = std::numeric_limits<float>::quiet_NaN();
   nanPoint.z = std::numeric_limits<float>::quiet_NaN();
+  // 这里为何缺少设置nanPoint.intensity = -1;  而后续地面分割需要用到
 
   _laser_cloud_in->clear();
   _ground_cloud->clear();
@@ -149,6 +151,8 @@ void ImageProjection::cloudHandler(
   cloudSegmentation();
   //publish (optionally)
   publishClouds();
+
+  std::printf("one laserCloudMsg imageProjection done\n");
 }
 
 
@@ -163,17 +167,20 @@ void ImageProjection::projectPointCloud() {
                        thisPoint.y * thisPoint.y +
                        thisPoint.z * thisPoint.z);
 
-    // find the row and column index in the image for this point
+    // find the row and column index in the image for this point(雷达第几线)
     float verticalAngle = std::asin(thisPoint.z / range);
         //std::atan2(thisPoint.z, sqrt(thisPoint.x * thisPoint.x + thisPoint.y * thisPoint.y));
 
+    // 从上往下计数，-15度即为初始线0, 共16线，当前点所属行的id
     int rowIdn = (verticalAngle + _ang_bottom) / _ang_resolution_Y;
     if (rowIdn < 0 || rowIdn >= _vertical_scans) {
       continue;
     }
 
+    // 水平方向夹角
     float horizonAngle = std::atan2(thisPoint.x, thisPoint.y);
 
+    // 当前点所属列的id
     int columnIdn = -round((horizonAngle - M_PI_2) / _ang_resolution_X) + _horizontal_scans * 0.5;
 
     if (columnIdn >= _horizontal_scans){
@@ -188,13 +195,16 @@ void ImageProjection::projectPointCloud() {
       continue;
     }
 
+    // 每个像素点对应位置设置为范围range值
     _range_mat(rowIdn, columnIdn) = range;
 
     thisPoint.intensity = (float)rowIdn + (float)columnIdn / 10000.0;
 
     size_t index = columnIdn + rowIdn * _horizontal_scans;
+    // 按照空间位置对应索引存储的点云，方便通过range图像像素位置直接索引出3D空间点坐标
     _full_cloud->points[index] = thisPoint;
     // the corresponding range of a point is saved as "intensity"
+    // 对应点的范围值被存储为强度intensity field中
     _full_info_cloud->points[index] = thisPoint;
     _full_info_cloud->points[index].intensity = range;
   }
@@ -203,16 +213,22 @@ void ImageProjection::projectPointCloud() {
 void ImageProjection::findStartEndAngle() {
   // start and end orientation of this cloud
   auto point = _laser_cloud_in->points.front();
+  // std::atan2() 返回值的范围是(-PI, PI]， 表示复数x + yi的幅角
+  // _seg_Msg.startOrientation范围为(-PI, PI]
   _seg_msg.startOrientation = -std::atan2(point.y, point.x);
 
   point = _laser_cloud_in->points.back();
+  // _seg_msg.endOrientation范围为(PI, 3PI]
+  // 因为内部雷达旋转方向原因，所以atan2()前需要添加负号
   _seg_msg.endOrientation = -std::atan2(point.y, point.x) + 2 * M_PI;
 
+  // 将_seg_msg.endOrientation - _seg_msg.startOrientation调整为[PI, 3PI]之间
   if (_seg_msg.endOrientation - _seg_msg.startOrientation > 3 * M_PI) {
     _seg_msg.endOrientation -= 2 * M_PI;
   } else if (_seg_msg.endOrientation - _seg_msg.startOrientation < M_PI) {
     _seg_msg.endOrientation += 2 * M_PI;
   }
+  // _seg_msg.orientationDiff的范围是(PI, 3PI)，一圈大小为2PI, 应该在2PI左右
   _seg_msg.orientationDiff =
       _seg_msg.endOrientation - _seg_msg.startOrientation;
 }
@@ -223,8 +239,9 @@ void ImageProjection::groundRemoval() {
   //  0, initial value, after validation, means not ground
   //  1, ground
   for (size_t j = 0; j < _horizontal_scans; ++j) {
+    // _ground_scan_index有config.yaml设置
     for (size_t i = 0; i < _ground_scan_index; ++i) {
-      size_t lowerInd = j + (i)*_horizontal_scans;
+      size_t lowerInd = j + (i) * _horizontal_scans;
       size_t upperInd = j + (i + 1) * _horizontal_scans;
 
       if (_full_cloud->points[lowerInd].intensity == -1 ||
@@ -241,10 +258,12 @@ void ImageProjection::groundRemoval() {
       float dZ =
           _full_cloud->points[upperInd].z - _full_cloud->points[lowerInd].z;
 
+      // 根据上下两线之间点的XYZ位置得到两线之间的俯仰角
       float vertical_angle = std::atan2(dZ , sqrt(dX * dX + dY * dY + dZ * dZ));
 
       // TODO: review this change
 
+      // 如果两点所在线之间俯仰角在10度之内，则认为其是地面点
       if ( (vertical_angle - _sensor_mount_angle) <= 10 * DEG_TO_RAD) {
         _ground_mat(i, j) = 1;
         _ground_mat(i + 1, j) = 1;
@@ -255,6 +274,7 @@ void ImageProjection::groundRemoval() {
   // mark entry that doesn't need to label (ground and invalid point) for
   // segmentation note that ground remove is from 0~_N_scan-1, need _range_mat
   // for mark label matrix for the 16th scan
+  // 地面点和非法点被标记为-1(不需要标签)
   for (size_t i = 0; i < _vertical_scans; ++i) {
     for (size_t j = 0; j < _horizontal_scans; ++j) {
       if (_ground_mat(i, j) == 1 ||
@@ -264,6 +284,7 @@ void ImageProjection::groundRemoval() {
     }
   }
 
+  // 将当前帧得到的地面点添加到_ground_cloud中
   for (size_t i = 0; i <= _ground_scan_index; ++i) {
     for (size_t j = 0; j < _horizontal_scans; ++j) {
       if (_ground_mat(i, j) == 1)
@@ -275,18 +296,23 @@ void ImageProjection::groundRemoval() {
 void ImageProjection::cloudSegmentation() {
   // segmentation process
   for (size_t i = 0; i < _vertical_scans; ++i)
-    for (size_t j = 0; j < _horizontal_scans; ++j)
+    for (size_t j = 0; j < _horizontal_scans; ++j) {
+      // 如果labelMat[i][j] == 0 表示没有对该点进行分类，需要对该点进行聚类
       if (_label_mat(i, j) == 0) labelComponents(i, j);
+    }
 
   int sizeOfSegCloud = 0;
   // extract segmented cloud for lidar odometry
   for (size_t i = 0; i < _vertical_scans; ++i) {
+    // _seg_msg.startRingIndex[i], _seg_msg.endRingIndex[i]表示第i线的点云的起始和终止序列
+    // 以开始线后的第5线为开始，以结束线前的第6线为结束
     _seg_msg.startRingIndex[i] = sizeOfSegCloud - 1 + 5;
 
     for (size_t j = 0; j < _horizontal_scans; ++j) {
       if (_label_mat(i, j) > 0 || _ground_mat(i, j) == 1) {
         // outliers that will not be used for optimization (always continue)
         if (_label_mat(i, j) == 999999) {
+          // 对于聚类数量不足的点，当列数为5的倍数时，且行数较大时，将其保存到边界外点云中，之后跳过
           if (i > _ground_scan_index && j % 5 == 0) {
             _outlier_cloud->push_back(
                 _full_cloud->points[j + i * _horizontal_scans]);
@@ -296,6 +322,7 @@ void ImageProjection::cloudSegmentation() {
           }
         }
         // majority of ground points are skipped
+        // 对于地面点，对于列数不为5的倍数的，直接跳过不处理
         if (_ground_mat(i, j) == 1) {
           if (j % 5 != 0 && j > 5 && j < _horizontal_scans - 5) continue;
         }
@@ -315,10 +342,12 @@ void ImageProjection::cloudSegmentation() {
       }
     }
 
+    // 以结束线前的第5线为结束
     _seg_msg.endRingIndex[i] = sizeOfSegCloud - 1 - 5;
   }
 
   // extract segmented cloud for visualization
+  // 将点云数据保存到_segmented_cloud_pure中
   for (size_t i = 0; i < _vertical_scans; ++i) {
     for (size_t j = 0; j < _horizontal_scans; ++j) {
       if (_label_mat(i, j) > 0 && _label_mat(i, j) != 999999) {
@@ -341,8 +370,9 @@ void ImageProjection::labelComponents(int row, int col) {
   boost::circular_buffer<Coord2D> queue(cloud_size);
   boost::circular_buffer<Coord2D> all_pushed(cloud_size);
 
-  queue.push_back({ row,col } );
-  all_pushed.push_back({ row,col } );
+  // BFS，以(row, col)为中心扩散，判断(row, col)是否为平面中的一点 
+  queue.push_back({ row, col } );
+  all_pushed.push_back({ row, col } );
 
   const Coord2D neighborIterator[4] = {
       {0, -1}, {-1, 0}, {1, 0}, {0, 1}};
@@ -353,26 +383,31 @@ void ImageProjection::labelComponents(int row, int col) {
     queue.pop_front();
 
     // Mark popped point
+    // _label_count的初始值为1，后续会递增
     _label_mat(fromInd.x(), fromInd.y()) = _label_count;
     // Loop through all the neighboring grids of popped grid
 
+    // 遍历fromInd的四个邻点
     for (const auto& iter : neighborIterator) {
       // new index
       int thisIndX = fromInd.x() + iter.x();
       int thisIndY = fromInd.y() + iter.y();
       // index should be within the boundary
-      if (thisIndX < 0 || thisIndX >= _vertical_scans){
+      if (thisIndX < 0 || thisIndX >= _vertical_scans) {
         continue;
       }
       // at range image margin (left or right side)
-      if (thisIndY < 0){
+      // 是环状图片，左右连通
+      if (thisIndY < 0) {
         thisIndY = _horizontal_scans - 1;
       }
-      if (thisIndY >= _horizontal_scans){
+      if (thisIndY >= _horizontal_scans) {
         thisIndY = 0;
       }
       // prevent infinite loop (caused by put already examined point back)
-      if (_label_mat(thisIndX, thisIndY) != 0){
+      // _label_mat中，-1表示无效点，0代表未进行标记过，其余为其他标记
+      // 如果当前邻点已经标记过(_label_mat被标记为正数，则跳过该点)
+      if (_label_mat(thisIndX, thisIndY) != 0) {
         continue;
       }
 
@@ -382,6 +417,7 @@ void ImageProjection::labelComponents(int row, int col) {
                     _range_mat(thisIndX, thisIndY));
 
       float alpha = (iter.x() == 0) ? _ang_resolution_X : _ang_resolution_Y;
+      // 计算两点之间是否存在平面特征，如果tang越大，则d1, d2之间的差距越小, 越平坦
       float tang = (d2 * sin(alpha) / (d1 - d2 * cos(alpha)));
 
       if (tang > segmentThetaThreshold) {
@@ -397,14 +433,16 @@ void ImageProjection::labelComponents(int row, int col) {
 
   // check if this segment is valid
   bool feasibleSegment = false;
-  if (all_pushed.size() >= 30){
+  // 如果聚类超过30个点，直接标记为一个可用聚类，_label_count递增
+  if (all_pushed.size() >= 30) {
     feasibleSegment = true;
-  }
-  else if (all_pushed.size() >= _segment_valid_point_num) {
+  } else if (all_pushed.size() >= _segment_valid_point_num) {
+    // 如果聚类数量小于30大于5，统计竖直方向上的聚类点数
     int lineCount = 0;
     for (size_t i = 0; i < _vertical_scans; ++i) {
       if (lineCountFlag[i] == true) ++lineCount;
     }
+    // 竖直方向上超过3个也将其标记为有效聚类
     if (lineCount >= _segment_valid_line_num) feasibleSegment = true;
   }
   // segment is valid, mark these points
@@ -412,6 +450,7 @@ void ImageProjection::labelComponents(int row, int col) {
     ++_label_count;
   } else {  // segment is invalid, mark these points
     for (size_t i = 0; i < all_pushed.size(); ++i) {
+      // 标记为999999的是需要舍弃的聚类的点，因为它们的数量少于30个且不符合竖直聚类要求
       _label_mat(all_pushed[i].x(), all_pushed[i].y()) = 999999;
     }
   }
@@ -447,11 +486,14 @@ void ImageProjection::publishClouds() {
   out.outlier_cloud.reset(new pcl::PointCloud<PointType>());
   out.segmented_cloud.reset(new pcl::PointCloud<PointType>());
 
+  // imageProject输出内容
   std::swap( out.seg_msg, _seg_msg);
   std::swap(out.outlier_cloud, _outlier_cloud);
   std::swap(out.segmented_cloud, _segmented_cloud);
 
   _output_channel.send( std::move(out) );
+
+  // std::printf("ImageProjection::publishClouds() done\n");
 
 }
 
