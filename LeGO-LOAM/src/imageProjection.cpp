@@ -487,7 +487,7 @@ void ImageProjection::publishClouds() {
   out.segmented_cloud.reset(new pcl::PointCloud<PointType>());
 
   // imageProject输出内容
-  std::swap( out.seg_msg, _seg_msg);
+  std::swap(out.seg_msg, _seg_msg);
   std::swap(out.outlier_cloud, _outlier_cloud);
   std::swap(out.segmented_cloud, _segmented_cloud);
 

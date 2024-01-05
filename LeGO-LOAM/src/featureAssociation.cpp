@@ -1210,7 +1210,7 @@ void FeatureAssociation::publishOdometry() {
   geometry_msgs::Quaternion geoQuat = tf::createQuaternionMsgFromRollPitchYaw(
       transformSum[2], -transformSum[0], -transformSum[1]);
 
-  // 发布当前帧相对于第一帧的位姿变换
+  // 发布当前帧相对于第一帧的位姿变换(累积)
   laserOdometry.header.stamp = cloudHeader.stamp;
   laserOdometry.pose.pose.orientation.x = -geoQuat.y;
   laserOdometry.pose.pose.orientation.y = -geoQuat.z;

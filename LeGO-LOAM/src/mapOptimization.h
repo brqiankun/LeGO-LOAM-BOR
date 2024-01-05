@@ -174,6 +174,8 @@ class MapOptimization {
 
   double timeLaserOdometry;
   double timeLastGloalMapPublish;
+  nav_msgs::Odometry laserOdometry;
+  std_msgs::Header laserOdometryHeader;
 
   float transformLast[6];
   float transformSum[6];

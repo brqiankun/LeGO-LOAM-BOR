@@ -499,7 +499,8 @@ void MapOptimization::publishTF() {
   geometry_msgs::Quaternion geoQuat = tf::createQuaternionMsgFromRollPitchYaw(
       transformAftMapped[2], -transformAftMapped[0], -transformAftMapped[1]);
 
-  odomAftMapped.header.stamp = ros::Time().fromSec(timeLaserOdometry);
+  // odomAftMapped.header.stamp = ros::Time().fromSec(timeLaserOdometry);
+  odomAftMapped.header.stamp = laserOdometryHeader.stamp;
   odomAftMapped.pose.pose.orientation.x = -geoQuat.y;
   odomAftMapped.pose.pose.orientation.y = -geoQuat.z;
   odomAftMapped.pose.pose.orientation.z = geoQuat.x;
@@ -515,7 +516,8 @@ void MapOptimization::publishTF() {
   odomAftMapped.twist.twist.linear.z = transformBefMapped[5];
   pubOdomAftMapped.publish(odomAftMapped);
 
-  aftMappedTrans.stamp_ = ros::Time().fromSec(timeLaserOdometry);
+  // aftMappedTrans.stamp_ = ros::Time().fromSec(timeLaserOdometry);
+  aftMappedTrans.stamp_ = laserOdometryHeader.stamp;
   aftMappedTrans.setRotation(
       tf::Quaternion(-geoQuat.y, -geoQuat.z, geoQuat.x, geoQuat.w));
   aftMappedTrans.setOrigin(tf::Vector3(
@@ -528,15 +530,17 @@ void MapOptimization::publishKeyPosesAndFrames() {
     sensor_msgs::PointCloud2 cloudMsgTemp;
     pcl::toROSMsg(*cloudKeyPoses3D, cloudMsgTemp);
     cloudMsgTemp.header.stamp = ros::Time().fromSec(timeLaserOdometry);
-    cloudMsgTemp.header.frame_id = "/camera_init";
+    
+    cloudMsgTemp.header.frame_id = "camera_init";
     pubKeyPoses.publish(cloudMsgTemp);
   }
 
   if (pubRecentKeyFrames.getNumSubscribers() != 0) {
     sensor_msgs::PointCloud2 cloudMsgTemp;
     pcl::toROSMsg(*laserCloudSurfFromMapDS, cloudMsgTemp);
-    cloudMsgTemp.header.stamp = ros::Time().fromSec(timeLaserOdometry);
-    cloudMsgTemp.header.frame_id = "/camera_init";
+    // cloudMsgTemp.header.stamp = ros::Time().fromSec(timeLaserOdometry);
+    cloudMsgTemp.header.stamp = laserOdometryHeader.stamp;
+    cloudMsgTemp.header.frame_id = "camera_init";
     pubRecentKeyFrames.publish(cloudMsgTemp);
   }
 }
@@ -579,8 +583,9 @@ void MapOptimization::publishGlobalMap() {
 
   sensor_msgs::PointCloud2 cloudMsgTemp;
   pcl::toROSMsg(*globalMapKeyFramesDS, cloudMsgTemp);
-  cloudMsgTemp.header.stamp = ros::Time().fromSec(timeLaserOdometry);
-  cloudMsgTemp.header.frame_id = "/camera_init";
+  // cloudMsgTemp.header.stamp = ros::Time().fromSec(timeLaserOdometry);
+  cloudMsgTemp.header.stamp = laserOdometryHeader.stamp;
+  cloudMsgTemp.header.frame_id = "camera_init";
   pubLaserCloudSurround.publish(cloudMsgTemp);
 
   globalMapKeyPoses->clear();
@@ -651,8 +656,9 @@ bool MapOptimization::detectLoopClosure() {
   if (pubHistoryKeyFrames.getNumSubscribers() != 0) {
     sensor_msgs::PointCloud2 cloudMsgTemp;
     pcl::toROSMsg(*nearHistorySurfKeyFrameCloudDS, cloudMsgTemp);
-    cloudMsgTemp.header.stamp = ros::Time().fromSec(timeLaserOdometry);
-    cloudMsgTemp.header.frame_id = "/camera_init";
+    // cloudMsgTemp.header.stamp = ros::Time().fromSec(timeLaserOdometry);
+    cloudMsgTemp.header.stamp = laserOdometryHeader.stamp;
+    cloudMsgTemp.header.frame_id = "camera_init";
     pubHistoryKeyFrames.publish(cloudMsgTemp);
   }
 
@@ -702,7 +708,8 @@ void MapOptimization::performLoopClosure() {
     sensor_msgs::PointCloud2 cloudMsgTemp;
     pcl::toROSMsg(*closed_cloud, cloudMsgTemp);
     cloudMsgTemp.header.stamp = ros::Time().fromSec(timeLaserOdometry);
-    cloudMsgTemp.header.frame_id = "/camera_init";
+    cloudMsgTemp.header.stamp = laserOdometryHeader.stamp;
+    cloudMsgTemp.header.frame_id = "camera_init";
     pubIcpKeyFrames.publish(cloudMsgTemp);
   }
   /*
@@ -1397,8 +1404,11 @@ void MapOptimization::run() {
       laserCloudSurfLast = association.cloud_surf_last;
       laserCloudOutlierLast = association.cloud_outlier_last;
 
-      timeLaserOdometry = association.laser_odometry.header.stamp.toSec();
-      timeLastProcessing = timeLaserOdometry;
+      // 读出featureAssociation发送的stamp
+      // timeLaserOdometry = association.laser_odometry.header.stamp.toSec();
+      laserOdometry = std::move(association.laser_odometry);
+      laserOdometryHeader = laserOdometry.header;
+      timeLastProcessing = timeLaserOdometry;   // 这个变量是为何
 
       // 读出association.laser_odometry信息到transformSum中
       OdometryToTransform(association.laser_odometry, transformSum);
