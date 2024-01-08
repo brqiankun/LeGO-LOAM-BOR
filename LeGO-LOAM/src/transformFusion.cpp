@@ -32,6 +32,8 @@
 
 #include "transformFusion.h"
 
+using namespace std::chrono_literals;
+
 TransformFusion::TransformFusion(ros::NodeHandle& node) : nh(node) {
   pubLaserOdometry2 =
       nh.advertise<nav_msgs::Odometry>("/integrated_to_init", 5);

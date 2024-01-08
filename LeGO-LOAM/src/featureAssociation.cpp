@@ -1227,6 +1227,7 @@ void FeatureAssociation::publishOdometry() {
       tf::Quaternion(-geoQuat.y, -geoQuat.z, geoQuat.x, geoQuat.w));
   laserOdometryTrans.setOrigin(
       tf::Vector3(transformSum[3], transformSum[4], transformSum[5]));
+  std::printf("laserOdometryTrans.stamp_: %f\n", laserOdometryTrans.stamp_.toSec());
   tfBroadcaster.sendTransform(laserOdometryTrans);
 }
 
@@ -1371,6 +1372,7 @@ void FeatureAssociation::runFeatureAssociation() {
 
       out.laser_odometry = laserOdometry;
 
+      std::printf("one featureAssociation ready to send\n");
       _output_channel.send(std::move(out));
       std::printf("one featureAssociation send done\n\n");
     }

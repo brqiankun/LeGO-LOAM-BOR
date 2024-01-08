@@ -23,8 +23,7 @@ int main(int argc, char** argv) {
 
   ImageProjection IP(nh, projection_out_channel);
 
-  FeatureAssociation FA(nh, projection_out_channel,
-                        association_out_channel);
+  FeatureAssociation FA(nh, projection_out_channel, association_out_channel);
 
   MapOptimization MO(nh, association_out_channel);
 
@@ -32,8 +31,8 @@ int main(int argc, char** argv) {
 
   ROS_INFO("\033[1;32m---->\033[0m LeGO-LOAM Started.");
 
-  ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>(lidar_topic, 1, &ImageProjection::cloudHandler, &IP);
-  ROS_INFO("------------------------ImageProjection::cloud register done-----------------------");
+  ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>(lidar_topic, 10, &ImageProjection::cloudHandler, &IP);
+  ROS_INFO("------------------------ImageProjection::cloudHandler algorithm register done-----------------------");
 
   ros::spin();
 

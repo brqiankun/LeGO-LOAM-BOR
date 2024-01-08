@@ -134,6 +134,7 @@ void ImageProjection::resetParameters() {
 void ImageProjection::cloudHandler(
     const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg) {
   // Reset parameters
+  std::printf("receive a laserCloudMsg\n");
   resetParameters();
 
   // Copy and remove NAN points
@@ -141,6 +142,7 @@ void ImageProjection::cloudHandler(
   std::vector<int> indices;
   pcl::removeNaNFromPointCloud(*_laser_cloud_in, *_laser_cloud_in, indices);
   _seg_msg.header = laserCloudMsg->header;
+  _seg_msg.header.stamp = ros::Time::now();        // 所有时间戳统一使用系统时间，防止重复
 
   findStartEndAngle();
   // Range image projection
@@ -152,7 +154,7 @@ void ImageProjection::cloudHandler(
   //publish (optionally)
   publishClouds();
 
-  std::printf("one laserCloudMsg imageProjection done\n");
+  std::printf("one laserCloudMsg imageProjection done\n\n");
 }
 
 
@@ -469,7 +471,7 @@ void ImageProjection::publishClouds() {
       pub.publish(temp);
     }
   };
-
+  dbg("");
   PublishCloud(_pub_outlier_cloud, temp, _outlier_cloud);
   PublishCloud(_pub_segmented_cloud, temp, _segmented_cloud);
   PublishCloud(_pub_full_cloud, temp, _full_cloud);
@@ -480,7 +482,7 @@ void ImageProjection::publishClouds() {
   if (_pub_segmented_cloud_info.getNumSubscribers() != 0) {
     _pub_segmented_cloud_info.publish(_seg_msg);
   }
-
+  dbg("");
   //--------------------
   ProjectionOut out;
   out.outlier_cloud.reset(new pcl::PointCloud<PointType>());
@@ -491,6 +493,7 @@ void ImageProjection::publishClouds() {
   std::swap(out.outlier_cloud, _outlier_cloud);
   std::swap(out.segmented_cloud, _segmented_cloud);
 
+  dbg("");
   _output_channel.send( std::move(out) );
 
   // std::printf("ImageProjection::publishClouds() done\n");

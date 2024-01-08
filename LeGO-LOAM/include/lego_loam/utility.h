@@ -41,6 +41,8 @@
 #include <thread>
 #include <mutex>
 
+#include <dbg.h>
+
 typedef pcl::PointXYZI  PointType;
 
 typedef Eigen::Vector3f Vector3;
