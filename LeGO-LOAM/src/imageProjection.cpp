@@ -101,6 +101,7 @@ void ImageProjection::resetParameters() {
   nanPoint.x = std::numeric_limits<float>::quiet_NaN();
   nanPoint.y = std::numeric_limits<float>::quiet_NaN();
   nanPoint.z = std::numeric_limits<float>::quiet_NaN();
+  nanPoint.intensity = -1;
   // 这里为何缺少设置nanPoint.intensity = -1;  而后续地面分割需要用到
 
   _laser_cloud_in->clear();
@@ -120,8 +121,7 @@ void ImageProjection::resetParameters() {
   _label_count = 1;
 
   std::fill(_full_cloud->points.begin(), _full_cloud->points.end(), nanPoint);
-  std::fill(_full_info_cloud->points.begin(), _full_info_cloud->points.end(),
-            nanPoint);
+  std::fill(_full_info_cloud->points.begin(), _full_info_cloud->points.end(), nanPoint);
 
   _seg_msg.startRingIndex.assign(_vertical_scans, 0);
   _seg_msg.endRingIndex.assign(_vertical_scans, 0);
@@ -143,12 +143,14 @@ void ImageProjection::cloudHandler(
   pcl::removeNaNFromPointCloud(*_laser_cloud_in, *_laser_cloud_in, indices);
   _seg_msg.header = laserCloudMsg->header;
   _seg_msg.header.stamp = ros::Time::now();        // 所有时间戳统一使用系统时间，防止重复
+  dbg(_seg_msg.header.frame_id);
 
   findStartEndAngle();
   // Range image projection
+  // 添加了labeled点云的平面投影
   projectPointCloud();
   // Mark ground points
-  groundRemoval();
+  // groundRemoval();
   // Point cloud segmentation
   cloudSegmentation();
   //publish (optionally)
@@ -183,7 +185,7 @@ void ImageProjection::projectPointCloud() {
     float horizonAngle = std::atan2(thisPoint.x, thisPoint.y);
 
     // 当前点所属列的id
-    int columnIdn = -round((horizonAngle - M_PI_2) / _ang_resolution_X) + _horizontal_scans * 0.5;
+    int columnIdn = -std::round((horizonAngle - M_PI_2) / _ang_resolution_X) + _horizontal_scans * 0.5;
 
     if (columnIdn >= _horizontal_scans){
       columnIdn -= _horizontal_scans;
@@ -199,26 +201,48 @@ void ImageProjection::projectPointCloud() {
 
     // 每个像素点对应位置设置为范围range值
     _range_mat(rowIdn, columnIdn) = range;
+    // 根据labeled的点云(intensity field)来直接进行2D range image赋值
+    if (thisPoint.intensity == 1) {    // groundLabeled
+      _ground_mat(rowIdn, columnIdn) = 1;
+      _ground_cloud->push_back(thisPoint);   // 将当前帧得到的地面点添加到_ground_cloud中
+    }
 
+    // intensity field被设置为row, column索引相关
     thisPoint.intensity = (float)rowIdn + (float)columnIdn / 10000.0;
 
     size_t index = columnIdn + rowIdn * _horizontal_scans;
     // 按照空间位置对应索引存储的点云，方便通过range图像像素位置直接索引出3D空间点坐标
-    _full_cloud->points[index] = thisPoint;
+    _full_cloud->points[index] = thisPoint;    // 强度intensity field为行加列的索引
     // the corresponding range of a point is saved as "intensity"
     // 对应点的范围值被存储为强度intensity field中
     _full_info_cloud->points[index] = thisPoint;
     _full_info_cloud->points[index].intensity = range;
   }
+
+  // extract ground cloud (_ground_mat == 1)
+  // mark entry that doesn't need to label (ground and invalid point) for
+  // segmentation note that ground remove is from 0~_N_scan-1, need _range_mat
+  // for mark label matrix for the 16th scan
+  // 地面点和非法点被标记为-1(不需要标签)
+  for (size_t i = 0; i < _vertical_scans; ++i) {
+    for (size_t j = 0; j < _horizontal_scans; ++j) {
+      if (_ground_mat(i, j) == 1 ||
+          _range_mat(i, j) == FLT_MAX) {
+        _label_mat(i, j) = -1;
+      }
+    }
+  }
+  // dbg(_ground_cloud->size());
 }
 
 void ImageProjection::findStartEndAngle() {
-  // start and end orientation of this cloud
+  // start and end orientation of this cloud 从输入点云中读出一个第一个点
   auto point = _laser_cloud_in->points.front();
   // std::atan2() 返回值的范围是(-PI, PI]， 表示复数x + yi的幅角
   // _seg_Msg.startOrientation范围为(-PI, PI]
   _seg_msg.startOrientation = -std::atan2(point.y, point.x);
 
+  // 从输入点云中读出最后一个点
   point = _laser_cloud_in->points.back();
   // _seg_msg.endOrientation范围为(PI, 3PI]
   // 因为内部雷达旋转方向原因，所以atan2()前需要添加负号
@@ -240,9 +264,9 @@ void ImageProjection::groundRemoval() {
   // -1, no valid info to check if ground of not
   //  0, initial value, after validation, means not ground
   //  1, ground
-  for (size_t j = 0; j < _horizontal_scans; ++j) {
+  for (size_t j = 0; j < _horizontal_scans; ++j) {  // colIdx
     // _ground_scan_index有config.yaml设置
-    for (size_t i = 0; i < _ground_scan_index; ++i) {
+    for (size_t i = 0; i < _ground_scan_index; ++i) {    // rowIdx
       size_t lowerInd = j + (i) * _horizontal_scans;
       size_t upperInd = j + (i + 1) * _horizontal_scans;
 
@@ -272,6 +296,7 @@ void ImageProjection::groundRemoval() {
       }
     }
   }
+
   // extract ground cloud (_ground_mat == 1)
   // mark entry that doesn't need to label (ground and invalid point) for
   // segmentation note that ground remove is from 0~_N_scan-1, need _range_mat
@@ -297,11 +322,13 @@ void ImageProjection::groundRemoval() {
 
 void ImageProjection::cloudSegmentation() {
   // segmentation process
-  for (size_t i = 0; i < _vertical_scans; ++i)
+  // 对所有点进行聚类分割
+  for (size_t i = 0; i < _vertical_scans; ++i) {
     for (size_t j = 0; j < _horizontal_scans; ++j) {
       // 如果labelMat[i][j] == 0 表示没有对该点进行分类，需要对该点进行聚类
       if (_label_mat(i, j) == 0) labelComponents(i, j);
     }
+  }
 
   int sizeOfSegCloud = 0;
   // extract segmented cloud for lidar odometry
@@ -313,7 +340,7 @@ void ImageProjection::cloudSegmentation() {
     for (size_t j = 0; j < _horizontal_scans; ++j) {
       if (_label_mat(i, j) > 0 || _ground_mat(i, j) == 1) {
         // outliers that will not be used for optimization (always continue)
-        if (_label_mat(i, j) == 999999) {
+        if (_label_mat(i, j) == 999999) {    // 聚类舍弃的点
           // 对于聚类数量不足的点，当列数为5的倍数时，且行数较大时，将其保存到边界外点云中，之后跳过
           if (i > _ground_scan_index && j % 5 == 0) {
             _outlier_cloud->push_back(
@@ -330,6 +357,7 @@ void ImageProjection::cloudSegmentation() {
         }
         // mark ground points so they will not be considered as edge features
         // later
+        // 对于segmentedCloud进行区分是否为Ground点
         _seg_msg.segmentedCloudGroundFlag[sizeOfSegCloud] =
             (_ground_mat(i, j) == 1);
         // mark the points' column index for marking occlusion later
@@ -461,28 +489,21 @@ void ImageProjection::labelComponents(int row, int col) {
 void ImageProjection::publishClouds() {
 
   sensor_msgs::PointCloud2 temp;
-  temp.header.stamp = _seg_msg.header.stamp;
-  temp.header.frame_id = "base_link";
-
-  auto PublishCloud = [](ros::Publisher& pub, sensor_msgs::PointCloud2& temp,
-                          const pcl::PointCloud<PointType>::Ptr& cloud) {
-    if (pub.getNumSubscribers() != 0) {
-      pcl::toROSMsg(*cloud, temp);
-      pub.publish(temp);
-    }
+  auto PublishCloud = [&](ros::Publisher& pub, const pcl::PointCloud<PointType>::Ptr& cloud) {
+    sensor_msgs::PointCloud2 temp;
+    pcl::toROSMsg(*cloud, temp);
+    temp.header.stamp = _seg_msg.header.stamp;
+    temp.header.frame_id = "base_link";
+    pub.publish(temp);
   };
-  dbg("");
-  PublishCloud(_pub_outlier_cloud, temp, _outlier_cloud);
-  PublishCloud(_pub_segmented_cloud, temp, _segmented_cloud);
-  PublishCloud(_pub_full_cloud, temp, _full_cloud);
-  PublishCloud(_pub_ground_cloud, temp, _ground_cloud);
-  PublishCloud(_pub_segmented_cloud_pure, temp, _segmented_cloud_pure);
-  PublishCloud(_pub_full_info_cloud, temp, _full_info_cloud);
+  PublishCloud(_pub_outlier_cloud, _outlier_cloud);
+  PublishCloud(_pub_segmented_cloud, _segmented_cloud);            // 少量地面点云 + 物体点云
+  PublishCloud(_pub_full_cloud, _full_cloud);
+  PublishCloud(_pub_ground_cloud, _ground_cloud);                  // 地面点云
+  PublishCloud(_pub_segmented_cloud_pure, _segmented_cloud_pure);
+  PublishCloud(_pub_full_info_cloud, _full_info_cloud);
 
-  if (_pub_segmented_cloud_info.getNumSubscribers() != 0) {
-    _pub_segmented_cloud_info.publish(_seg_msg);
-  }
-  dbg("");
+  _pub_segmented_cloud_info.publish(_seg_msg);
   //--------------------
   ProjectionOut out;
   out.outlier_cloud.reset(new pcl::PointCloud<PointType>());
@@ -493,7 +514,6 @@ void ImageProjection::publishClouds() {
   std::swap(out.outlier_cloud, _outlier_cloud);
   std::swap(out.segmented_cloud, _segmented_cloud);
 
-  dbg("");
   _output_channel.send( std::move(out) );
 
   // std::printf("ImageProjection::publishClouds() done\n");

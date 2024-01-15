@@ -80,6 +80,7 @@ MapOptimization::MapOptimization(ros::NodeHandle &node,
   odomAftMapped.header.frame_id = "camera_init";
   odomAftMapped.child_frame_id = "aft_mapped";
 
+  // 经过map关键帧优化的当前帧相对于起始第一帧的位姿变换
   aftMappedTrans.frame_id_ = "camera_init";
   aftMappedTrans.child_frame_id_ = "aft_mapped";
 
@@ -584,6 +585,7 @@ void MapOptimization::publishGlobalMap() {
   cloudMsgTemp.header.frame_id = "camera_init";
   pubLaserCloudSurround.publish(cloudMsgTemp);
 
+  dbg("---------------------publishGlobalMap()----------------------------");
   globalMapKeyPoses->clear();
   globalMapKeyPosesDS->clear();
   globalMapKeyFrames->clear();
@@ -1198,6 +1200,7 @@ bool MapOptimization::LMOptimization(int iterCount) {
   return false;
 }
 
+// 得到transformBefMapped[] transformAftMapped[];
 void MapOptimization::scan2MapOptimization() {
   if (laserCloudCornerFromMapDSNum > 10 && laserCloudSurfFromMapDSNum > 100) {
     kdtreeCornerFromMap.setInputCloud(laserCloudCornerFromMapDS);
@@ -1213,10 +1216,11 @@ void MapOptimization::scan2MapOptimization() {
       if (LMOptimization(iterCount) == true) break;
     }
 
-    transformUpdate();
+    transformUpdate();  // 得到transformBefMapped[] transformAftMapped[];
   }
 }
 
+// 更新transformAftMapped
 void MapOptimization::saveKeyFramesAndFactor() {
   currentRobotPosPoint.x = transformAftMapped[3];
   currentRobotPosPoint.y = transformAftMapped[4];
@@ -1404,7 +1408,7 @@ void MapOptimization::run() {
       timeLaserOdometry = laserOdometryHeader.stamp.toSec();
       timeLastProcessing = timeLaserOdometry;   // 这个变量是为何
 
-      // 读出association.laser_odometry信息到transformSum中
+      // 读出association.laser_odometry信息到transformSum[]中
       OdometryToTransform(association.laser_odometry, transformSum);
 
       // 得到transformTobeMapped
@@ -1416,15 +1420,16 @@ void MapOptimization::run() {
       // 降采样当前帧
       downsampleCurrentScan();
 
-      // 当前扫描进行边缘优化，图优化以及进行LM优化的过程
+      // 当前扫描进行边缘corner优化，图优化surf以及进行LM优化的过程  
+      // 得到transformBefMapped[] transformAftMapped[];
       scan2MapOptimization();
 
-      // 保存关键帧
+      // 保存关键帧并更新transformAftMapped[]
       saveKeyFramesAndFactor();
 
       correctPoses();
 
-      // 发送TF数据
+      // 发送TF数据 camera_init -> aft_mapped(transformAftMapped[])
       publishTF();
 
       // 发送关键位姿和关键帧

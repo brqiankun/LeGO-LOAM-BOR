@@ -36,7 +36,7 @@ using namespace std::chrono_literals;
 
 TransformFusion::TransformFusion(ros::NodeHandle& node) : nh(node) {
   pubLaserOdometry2 =
-      nh.advertise<nav_msgs::Odometry>("/integrated_to_init", 5);
+      nh.advertise<nav_msgs::Odometry>("/integrated_to_init", 5);  // transform Integration
   subLaserOdometry = nh.subscribe<nav_msgs::Odometry>(
       "/laser_odom_to_init", 5, &TransformFusion::laserOdometryHandler, this);
   subOdomAftMapped = nh.subscribe<nav_msgs::Odometry>(
@@ -215,6 +215,7 @@ void TransformFusion::laserOdometryHandler(
   laserOdometryTrans2.setOrigin(
       tf::Vector3(transformMapped[3], transformMapped[4], transformMapped[5]));
   tfBroadcaster2.sendTransform(laserOdometryTrans2);
+  std::printf("\033[0m\033[1;32m%s\n\033[0m", "Pose estimation from transform integration is published");
 }
 
 void TransformFusion::odomAftMappedHandler(

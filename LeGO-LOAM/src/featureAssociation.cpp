@@ -125,6 +125,7 @@ void FeatureAssociation::initializationValue() {
 
   skipFrameNum = 1;
 
+  // 优化计算变量(位姿变换)
   for (int i = 0; i < 6; ++i) {
     transformCur[i] = 0;
     transformSum[i] = 0;
@@ -266,13 +267,9 @@ void FeatureAssociation::extractFeatures() {
     surfPointsLessFlatScan->clear();
 
     for (int j = 0; j < 6; j++) {
-      int sp =
-          (segInfo.startRingIndex[i] * (6 - j) + segInfo.endRingIndex[i] * j) /
-          6;
+      int sp = (segInfo.startRingIndex[i] * (6 - j) + segInfo.endRingIndex[i] * j) / 6;
       int ep = (segInfo.startRingIndex[i] * (5 - j) +
-                segInfo.endRingIndex[i] * (j + 1)) /
-                   6 -
-               1;
+                segInfo.endRingIndex[i] * (j + 1)) / 6 - 1;
 
       if (sp >= ep) continue;
 
@@ -1227,7 +1224,7 @@ void FeatureAssociation::publishOdometry() {
       tf::Quaternion(-geoQuat.y, -geoQuat.z, geoQuat.x, geoQuat.w));
   laserOdometryTrans.setOrigin(
       tf::Vector3(transformSum[3], transformSum[4], transformSum[5]));
-  std::printf("laserOdometryTrans.stamp_: %f\n", laserOdometryTrans.stamp_.toSec());
+  // std::printf("laserOdometryTrans.stamp_: %f\n", laserOdometryTrans.stamp_.toSec());
   tfBroadcaster.sendTransform(laserOdometryTrans);
 }
 
@@ -1282,7 +1279,7 @@ void FeatureAssociation::publishCloudsLast() {
   }
 
   frameCount++;
-  // 调整坐标系
+  // 调整OutlierCloud的坐标系
   adjustOutlierCloud();
 
   if (frameCount >= skipFrameNum + 1) {
@@ -1351,6 +1348,7 @@ void FeatureAssociation::runFeatureAssociation() {
     // 积分总变换
     integrateTransformation();
 
+    // 每帧点云发送当前帧相对与第一帧的tf变换
     publishOdometry();
 
     publishCloudsLast();  // cloud to mapOptimization
@@ -1370,7 +1368,7 @@ void FeatureAssociation::runFeatureAssociation() {
       *out.cloud_surf_last = *laserCloudSurfLast;
       *out.cloud_outlier_last = *outlierCloud;
 
-      out.laser_odometry = laserOdometry;
+      out.laser_odometry = laserOdometry;    // 发送当前帧相对于第一帧的位姿变换
 
       std::printf("one featureAssociation ready to send\n");
       _output_channel.send(std::move(out));
